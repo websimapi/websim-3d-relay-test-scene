@@ -334,24 +334,24 @@
         }
 
         function updateMobileCameras(position, quaternion) {
+            // Create proper THREE.Vector3 and THREE.Quaternion from the data
+            const cameraPos = new THREE.Vector3(position.x, position.y, position.z);
+            const cameraQuat = new THREE.Quaternion(quaternion.x, quaternion.y, quaternion.z, quaternion.w);
+            
             // Store the latest camera update
-            lastCameraUpdate.position.copy(position);
-            lastCameraUpdate.quaternion.copy(quaternion);
+            lastCameraUpdate.position.copy(cameraPos);
+            lastCameraUpdate.quaternion.copy(cameraQuat);
             
-            // Update camera positions based on desktop camera
-            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion);
-            const right = new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion);
+            // Calculate right vector from camera quaternion for proper eye separation
+            const right = new THREE.Vector3(1, 0, 0).applyQuaternion(cameraQuat);
             
-            // Position left eye camera
-            leftEyeCamera.position.copy(position).sub(right.multiplyScalar(EYE_SEPARATION / 2));
-            leftEyeCamera.quaternion.copy(quaternion);
+            // Position left eye camera - shift by half the eye separation to the left
+            leftEyeCamera.position.copy(cameraPos).sub(right.clone().multiplyScalar(EYE_SEPARATION / 2));
+            leftEyeCamera.quaternion.copy(cameraQuat);
             
-            // Reset right vector for right eye
-            right.set(1, 0, 0).applyQuaternion(quaternion);
-            
-            // Position right eye camera
-            rightEyeCamera.position.copy(position).add(right.multiplyScalar(EYE_SEPARATION / 2));
-            rightEyeCamera.quaternion.copy(quaternion);
+            // Position right eye camera - shift by half the eye separation to the right
+            rightEyeCamera.position.copy(cameraPos).add(right.clone().multiplyScalar(EYE_SEPARATION / 2));
+            rightEyeCamera.quaternion.copy(cameraQuat);
         }
 
         function animate() {
@@ -367,7 +367,7 @@
                 renderer.render(scene, desktopCamera);
                 
                 // Send camera updates if paired
-                if (isPaired) {
+                if (isPaired && pairedClientId) {
                     const position = desktopCamera.position;
                     const quaternion = desktopCamera.quaternion;
                     
@@ -437,4 +437,3 @@
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body>
 </html>
-
