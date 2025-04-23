@@ -66,6 +66,7 @@
         let clock = new THREE.Clock();
         let EYE_SEPARATION = 0.064; // ~6.4cm between eyes
         let lastCameraUpdate = { position: new THREE.Vector3(), quaternion: new THREE.Quaternion() };
+        let lastSentTime = null;
         
         // Initialize
         async function init() {
@@ -334,24 +335,28 @@
         }
 
         function updateMobileCameras(position, quaternion) {
-            // Create proper THREE.Vector3 and THREE.Quaternion from the data
-            const cameraPos = new THREE.Vector3(position.x, position.y, position.z);
-            const cameraQuat = new THREE.Quaternion(quaternion.x, quaternion.y, quaternion.z, quaternion.w);
+            // Convert position and quaternion from plain objects to THREE.js objects
+            const posVector = new THREE.Vector3(position.x, position.y, position.z);
+            const quatObj = new THREE.Quaternion(quaternion.x, quaternion.y, quaternion.z, quaternion.w);
             
             // Store the latest camera update
-            lastCameraUpdate.position.copy(cameraPos);
-            lastCameraUpdate.quaternion.copy(cameraQuat);
+            lastCameraUpdate.position.copy(posVector);
+            lastCameraUpdate.quaternion.copy(quatObj);
             
-            // Calculate right vector from camera quaternion for proper eye separation
-            const right = new THREE.Vector3(1, 0, 0).applyQuaternion(cameraQuat);
+            // Update camera positions based on desktop camera
+            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(quatObj);
+            const right = new THREE.Vector3(1, 0, 0).applyQuaternion(quatObj);
             
-            // Position left eye camera - shift by half the eye separation to the left
-            leftEyeCamera.position.copy(cameraPos).sub(right.clone().multiplyScalar(EYE_SEPARATION / 2));
-            leftEyeCamera.quaternion.copy(cameraQuat);
+            // Position left eye camera
+            leftEyeCamera.position.copy(posVector);
+            leftEyeCamera.position.sub(right.clone().multiplyScalar(EYE_SEPARATION / 2));
+            leftEyeCamera.quaternion.copy(quatObj);
             
-            // Position right eye camera - shift by half the eye separation to the right
-            rightEyeCamera.position.copy(cameraPos).add(right.clone().multiplyScalar(EYE_SEPARATION / 2));
-            rightEyeCamera.quaternion.copy(cameraQuat);
+            // Position right eye camera
+            right.set(1, 0, 0).applyQuaternion(quatObj);
+            rightEyeCamera.position.copy(posVector);
+            rightEyeCamera.position.add(right.multiplyScalar(EYE_SEPARATION / 2));
+            rightEyeCamera.quaternion.copy(quatObj);
         }
 
         function animate() {
@@ -368,23 +373,29 @@
                 
                 // Send camera updates if paired
                 if (isPaired && pairedClientId) {
-                    const position = desktopCamera.position;
-                    const quaternion = desktopCamera.quaternion;
-                    
-                    room.send({
-                        type: 'cameraUpdate',
-                        position: {
-                            x: position.x,
-                            y: position.y,
-                            z: position.z
-                        },
-                        quaternion: {
-                            x: quaternion.x,
-                            y: quaternion.y,
-                            z: quaternion.z,
-                            w: quaternion.w
-                        }
-                    });
+                    // Send camera updates at most 30 times per second
+                    const now = clock.getElapsedTime();
+                    if (!lastSentTime || now - lastSentTime > 0.033) { // ~30fps
+                        const position = desktopCamera.position;
+                        const quaternion = desktopCamera.quaternion;
+                        
+                        room.send({
+                            type: 'cameraUpdate',
+                            position: {
+                                x: position.x,
+                                y: position.y,
+                                z: position.z
+                            },
+                            quaternion: {
+                                x: quaternion.x,
+                                y: quaternion.y,
+                                z: quaternion.z,
+                                w: quaternion.w
+                            }
+                        });
+                        
+                        lastSentTime = now;
+                    }
                 }
             } else {
                 // Render stereoscopic view
