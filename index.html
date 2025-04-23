@@ -9,8 +9,6 @@
             margin: 0;
             overflow: hidden;
             font-family: Arial, sans-serif;
-            background-color: #222;
-            color: white;
         }
         #info {
             position: absolute;
@@ -21,20 +19,6 @@
             padding: 5px;
             border-radius: 5px;
             z-index: 100;
-        }
-        #error-message {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: white;
-            background-color: rgba(255, 0, 0, 0.7);
-            padding: 20px;
-            border-radius: 5px;
-            text-align: center;
-            max-width: 80%;
-            z-index: 200;
-            display: none;
         }
         #canvas-container {
             position: absolute;
@@ -52,25 +36,10 @@
             height: 100%;
             overflow: hidden;
         }
-        /* Debug info styling */
-        #debug-info {
-            position: absolute;
-            bottom: 10px;
-            left: 10px;
-            color: white;
-            background-color: rgba(0,0,0,0.5);
-            padding: 5px;
-            border-radius: 5px;
-            z-index: 100;
-            font-size: 10px;
-            max-width: 80%;
-        }
     </style>
 </head>
 <body>
     <div id="info">Initializing...</div>
-    <div id="error-message"></div>
-    <div id="debug-info"></div>
     <div id="canvas-container"></div>
 
     <script type="importmap">
@@ -96,483 +65,370 @@
         let room;
         let clock = new THREE.Clock();
         let EYE_SEPARATION = 0.064; // ~6.4cm between eyes
-        let lastCameraUpdate = { position: new THREE.Vector3(), quaternion: new THREE.Quaternion() };
         let lastSentTime = null;
-        let debugMode = true; // Enable debug info
-        
-        // Check for WebGL support
-        function checkWebGLSupport() {
-            try {
-                const canvas = document.createElement('canvas');
-                return !!(window.WebGLRenderingContext && 
-                    (canvas.getContext('webgl') || canvas.getContext('experimental-webgl')));
-            } catch (e) {
-                return false;
-            }
-        }
-        
-        // Display error message
-        function showError(message) {
-            const errorElement = document.getElementById('error-message');
-            errorElement.textContent = message;
-            errorElement.style.display = 'block';
-            updateInfo('Error: ' + message);
-            console.error(message);
-        }
-        
-        // Display debug info
-        function updateDebugInfo(message) {
-            if (debugMode) {
-                const debugElement = document.getElementById('debug-info');
-                debugElement.textContent = message;
-                console.log(message);
-            }
-        }
-        
+
         // Initialize
         async function init() {
-            try {
-                // Check WebGL support first
-                if (!checkWebGLSupport()) {
-                    throw new Error('WebGL is not supported by your browser or device.');
-                }
-                
-                // Device detection
-                isDesktop = !(/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent));
-                updateInfo(`Device type: ${isDesktop ? 'Desktop' : 'Mobile'}`);
+            // Device detection
+            isDesktop = !(/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent));
+            updateInfo(`Device type: ${isDesktop ? 'Desktop' : 'Mobile'}`);
 
-                // Initialize WebSocket connection
-                room = new WebsimSocket();
-                await room.initialize();
-                updateInfo(`Connected as: ${room.peers[room.clientId].username}`);
+            // Initialize WebSocket connection
+            room = new WebsimSocket();
+            await room.initialize();
+            updateInfo(`Connected as: ${room.peers[room.clientId].username} (${room.clientId.substring(0,4)})`);
 
-                // Initialize presence
-                room.updatePresence({
-                    deviceType: isDesktop ? 'desktop' : 'mobile',
-                    username: room.peers[room.clientId].username,
-                    paired: false
-                });
+            // Initialize presence
+            room.updatePresence({
+                deviceType: isDesktop ? 'desktop' : 'mobile',
+                username: room.peers[room.clientId].username,
+                paired: false,
+                pairedWith: null
+            });
 
-                // Set up the scene
-                createScene();
+            // Set up the scene
+            createScene();
 
-                // Set up controls/rendering based on device type
-                if (isDesktop) {
-                    setupDesktopView();
-                } else {
-                    setupMobileView();
-                }
-
-                // Subscribe to presence updates for pairing
-                room.subscribePresence(handlePresenceUpdate);
-                
-                // Subscribe to presence update requests
-                room.subscribePresenceUpdateRequests(handleUpdateRequest);
-                
-                // Handle messages
-                room.onmessage = handleMessage;
-
-                // Start animation loop
-                animate();
-            } catch (error) {
-                showError(error.message || 'Failed to initialize 3D scene.');
+            // Set up controls/rendering based on device type
+            if (isDesktop) {
+                setupDesktopView();
+            } else {
+                setupMobileView();
             }
+
+            // Subscribe to presence updates for pairing
+            room.subscribePresence(handlePresenceUpdate);
+
+            // Subscribe to presence update requests
+            room.subscribePresenceUpdateRequests(handleUpdateRequest);
+
+            // Handle messages
+            room.onmessage = handleMessage;
+
+            // Start animation loop
+            animate();
         }
 
         function createScene() {
-            try {
-                // Create scene
-                scene = new THREE.Scene();
-                scene.background = new THREE.Color(0x87ceeb); // Sky blue
-                
-                // Create renderer with specific parameters
-                const rendererParams = {
-                    antialias: true,
-                    powerPreference: 'default', // Can be 'high-performance', 'low-power', or 'default'
-                    failIfMajorPerformanceCaveat: false
-                };
-                
-                renderer = new THREE.WebGLRenderer(rendererParams);
-                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Limit pixel ratio to improve performance
-                renderer.setSize(window.innerWidth, window.innerHeight);
-                document.getElementById('canvas-container').appendChild(renderer.domElement);
-                
-                // Add lighting
-                const ambientLight = new THREE.AmbientLight(0x404040);
-                scene.add(ambientLight);
-                
-                const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-                directionalLight.position.set(1, 1, 1);
-                scene.add(directionalLight);
-                
-                // Create infinite grass plane
-                const planeGeometry = new THREE.PlaneGeometry(1000, 1000);
-                const grassTexture = new THREE.TextureLoader().load('https://threejs.org/examples/textures/terrain/grasslight-big.jpg');
-                grassTexture.wrapS = THREE.RepeatWrapping;
-                grassTexture.wrapT = THREE.RepeatWrapping;
-                grassTexture.repeat.set(100, 100);
-                
-                const planeMaterial = new THREE.MeshStandardMaterial({ 
-                    map: grassTexture,
-                    roughness: 0.8
-                });
-                
-                const plane = new THREE.Mesh(planeGeometry, planeMaterial);
-                plane.rotation.x = -Math.PI / 2;
-                scene.add(plane);
-                
-                // Add some basic objects
-                // Red cube
-                const cubeGeometry = new THREE.BoxGeometry(1, 1, 1);
-                const cubeMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
-                const cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
-                cube.position.set(2, 0.5, -3);
-                scene.add(cube);
-                
-                // Blue sphere
-                const sphereGeometry = new THREE.SphereGeometry(0.7, 32, 16);
-                const sphereMaterial = new THREE.MeshStandardMaterial({ color: 0x0088ff, metalness: 0.3 });
-                const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
-                sphere.position.set(-2, 0.7, -3);
-                scene.add(sphere);
-                
-                // Green cylinder
-                const cylinderGeometry = new THREE.CylinderGeometry(0.5, 0.5, 2, 32);
-                const cylinderMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff44 });
-                const cylinder = new THREE.Mesh(cylinderGeometry, cylinderMaterial);
-                cylinder.position.set(0, 1, -6);
-                scene.add(cylinder);
-                
-                // Yellow torus
-                const torusGeometry = new THREE.TorusGeometry(0.7, 0.2, 16, 100);
-                const torusMaterial = new THREE.MeshStandardMaterial({ color: 0xffff00 });
-                const torus = new THREE.Mesh(torusGeometry, torusMaterial);
-                torus.position.set(4, 1, -5);
-                torus.rotation.x = Math.PI / 2;
-                scene.add(torus);
-                
-                // Handle window resize
-                window.addEventListener('resize', onWindowResize);
-            } catch (error) {
-                throw new Error('Error creating WebGL scene: ' + error.message);
-            }
+            // Create scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87ceeb); // Sky blue
+
+            // Create renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            // Add lighting
+            const ambientLight = new THREE.AmbientLight(0x404040);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(1, 1, 1);
+            scene.add(directionalLight);
+
+            // Create infinite grass plane
+            const planeGeometry = new THREE.PlaneGeometry(1000, 1000);
+            const planeMaterial = new THREE.MeshStandardMaterial({
+                color: 0x008800, // Green color
+                roughness: 0.9,
+                metalness: 0.1
+            });
+
+            const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+            plane.rotation.x = -Math.PI / 2;
+            scene.add(plane);
+
+            // Add some basic objects
+            // Red cube
+            const cubeGeometry = new THREE.BoxGeometry(1, 1, 1);
+            const cubeMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+            const cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
+            cube.position.set(2, 0.5, -3);
+            scene.add(cube);
+
+            // Blue sphere
+            const sphereGeometry = new THREE.SphereGeometry(0.7, 32, 16);
+            const sphereMaterial = new THREE.MeshStandardMaterial({ color: 0x0088ff, metalness: 0.3 });
+            const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+            sphere.position.set(-2, 0.7, -3);
+            scene.add(sphere);
+
+            // Green cylinder
+            const cylinderGeometry = new THREE.CylinderGeometry(0.5, 0.5, 2, 32);
+            const cylinderMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff44 });
+            const cylinder = new THREE.Mesh(cylinderGeometry, cylinderMaterial);
+            cylinder.position.set(0, 1, -6);
+            scene.add(cylinder);
+
+            // Yellow torus
+            const torusGeometry = new THREE.TorusGeometry(0.7, 0.2, 16, 100);
+            const torusMaterial = new THREE.MeshStandardMaterial({ color: 0xffff00 });
+            const torus = new THREE.Mesh(torusGeometry, torusMaterial);
+            torus.position.set(4, 1, -5);
+            torus.rotation.x = Math.PI / 2;
+            scene.add(torus);
+
+            // Handle window resize
+            window.addEventListener('resize', onWindowResize);
         }
 
         function setupDesktopView() {
             // Create desktop camera
             desktopCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            desktopCamera.position.set(0, 1.6, 0); // Eye height 1.6m
-            
+            desktopCamera.position.set(0, 1.6, 3); // Start slightly back
+            desktopCamera.lookAt(0, 1.6, 0);
+
             // Add orbit controls
             controls = new OrbitControls(desktopCamera, renderer.domElement);
+            controls.target.set(0, 1.6, 0); // Look slightly above ground
             controls.enableDamping = true;
             controls.dampingFactor = 0.05;
-            controls.target.set(0, 1.6, -5); // Look towards the objects
-            controls.update();
-            
-            updateDebugInfo("Desktop view setup complete");
+            updateInfo("Desktop view initialized. Use mouse to look around.");
         }
 
         function setupMobileView() {
-            // Create stereoscopic cameras first
-            const aspect = (window.innerWidth / 2) / window.innerHeight;
-            leftEyeCamera = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
-            rightEyeCamera = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
-            
-            // Position cameras with eye separation
-            leftEyeCamera.position.set(-EYE_SEPARATION / 2, 1.6, 0);
-            rightEyeCamera.position.set(EYE_SEPARATION / 2, 1.6, 0);
-            
-            // Set initial forward direction
-            leftEyeCamera.lookAt(0, 1.6, -1);
-            rightEyeCamera.lookAt(0, 1.6, -1);
-            
-            // Request device orientation permission on iOS
-            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-                document.body.addEventListener('click', async () => {
-                    try {
-                        const permission = await DeviceOrientationEvent.requestPermission();
-                        if (permission === 'granted') {
-                            setupGyroscope();
-                        }
-                    } catch (error) {
-                        updateInfo("Error requesting gyroscope permission");
-                    }
-                }, { once: true });
-                
-                updateInfo("Tap screen to enable gyroscope");
-            } else {
-                setupGyroscope();
-            }
-            
             // Create stereoscopic containers
             const container = document.getElementById('canvas-container');
-            container.innerHTML = '';
+            container.innerHTML = ''; // Clear existing canvas if any
             container.classList.add('stereo-container');
-            
+
             // Create left eye view
             const leftEyeView = document.createElement('div');
             leftEyeView.classList.add('eye-view');
             leftEyeView.id = 'left-eye';
             container.appendChild(leftEyeView);
-            
+
             // Create right eye view
             const rightEyeView = document.createElement('div');
             rightEyeView.classList.add('eye-view');
             rightEyeView.id = 'right-eye';
             container.appendChild(rightEyeView);
-            
-            updateDebugInfo("Mobile view setup complete");
-        }
 
-        function setupGyroscope() {
-            window.addEventListener('deviceorientation', function(event) {
-                if (room && pairedClientId) {
-                    // Send gyro data to paired desktop
-                    room.send({
-                        type: 'gyroData',
-                        alpha: event.alpha, // Z-axis rotation
-                        beta: event.beta,   // X-axis rotation
-                        gamma: event.gamma  // Y-axis rotation
-                    });
-                }
-            });
-            
-            updateInfo("Gyroscope enabled");
+            // Create cameras for stereoscopic view
+            const aspect = (window.innerWidth / 2) / window.innerHeight;
+            leftEyeCamera = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
+            rightEyeCamera = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
+
+            // Position cameras with eye separation relative to a base position
+            // Actual positions will be set by updateMobileCameras
+            leftEyeCamera.position.set(-EYE_SEPARATION / 2, 1.6, 0);
+            rightEyeCamera.position.set(EYE_SEPARATION / 2, 1.6, 0);
+            updateInfo("Mobile view initialized. Waiting for desktop pairing...");
         }
 
         function handlePresenceUpdate(presence) {
             // If I'm mobile and not paired, look for my desktop
             if (!isDesktop && !isPaired) {
                 const myUsername = room.peers[room.clientId].username;
-                
+
                 for (const clientId in presence) {
-                    if (clientId !== room.clientId && 
-                        presence[clientId].deviceType === 'desktop' && 
+                    if (clientId !== room.clientId &&
+                        presence[clientId].deviceType === 'desktop' &&
                         presence[clientId].username === myUsername &&
-                        !presence[clientId].paired) {
-                        
+                        !presence[clientId].paired) { // Check if desktop is not already paired
+
+                        console.log(`Found potential desktop pair: ${clientId}`);
                         // Found my desktop, request pairing
-                        pairedClientId = clientId;
+                        pairedClientId = clientId; // Tentatively set paired client
                         room.requestPresenceUpdate(clientId, {
                             type: 'requestPairing',
-                            fromClientId: room.clientId
+                            fromClientId: room.clientId,
+                            username: myUsername // Send username for verification
                         });
-                        
-                        // Update my presence
-                        room.updatePresence({
-                            paired: true,
-                            pairedWith: clientId
-                        });
-                        
-                        isPaired = true;
-                        updateInfo(`Paired with my desktop: ${clientId}`);
-                        updateDebugInfo(`Mobile paired with desktop ${clientId}`);
-                        break;
+
+                        // Don't set isPaired=true here yet. Wait for confirmation
+                        // or check desktop presence state.
+                        updateInfo(`Requesting pairing with desktop: ${clientId.substring(0,4)}`);
+                        break; // Only try to pair with one desktop
                     }
                 }
             }
-            
-            // Check if any clients disconnected
+
+            // Check if the desktop I requested pairing with has accepted
+            if (!isDesktop && !isPaired && pairedClientId) {
+                 const desktopPresence = presence[pairedClientId];
+                 if (desktopPresence && desktopPresence.paired && desktopPresence.pairedWith === room.clientId) {
+                     isPaired = true;
+                     room.updatePresence({ // Confirm pairing on my side
+                         paired: true,
+                         pairedWith: pairedClientId
+                     });
+                     updateInfo(`Successfully paired with desktop: ${pairedClientId.substring(0,4)}`);
+                     // Adjust renderer size for stereoscopic view now
+                     onWindowResize();
+                 }
+            }
+
+            // Check if my pair disconnected
             if (isPaired && pairedClientId && !presence[pairedClientId]) {
+                console.log(`Paired device ${pairedClientId} disconnected.`);
                 isPaired = false;
                 pairedClientId = null;
-                room.updatePresence({
-                    paired: false,
-                    pairedWith: null
-                });
-                updateInfo("Paired device disconnected");
+                room.updatePresence({ paired: false, pairedWith: null });
+                updateInfo(`Paired device disconnected. ${isDesktop ? 'Waiting for mobile.' : 'Waiting for desktop.'}`);
+                if (!isDesktop) {
+                     // Revert to single view rendering if pair disconnects
+                     onWindowResize();
+                }
             }
         }
 
         function handleUpdateRequest(request, fromClientId) {
-            if (request.type === 'requestPairing' && isDesktop) {
+            if (request.type === 'requestPairing' && isDesktop && !isPaired) {
                 // Check if this is my mobile (same username)
-                const requestingUsername = room.peers[fromClientId].username;
+                const requestingUsername = request.username; // Use username from request
                 const myUsername = room.peers[room.clientId].username;
-                
+
                 if (requestingUsername === myUsername) {
+                    console.log(`Received pairing request from mobile: ${fromClientId}`);
                     pairedClientId = fromClientId;
                     isPaired = true;
-                    
-                    // Update my presence
+
+                    // Update my presence to confirm pairing
                     room.updatePresence({
                         paired: true,
                         pairedWith: fromClientId
                     });
-                    
-                    updateInfo(`Paired with my mobile: ${fromClientId}`);
-                    updateDebugInfo(`Desktop paired with mobile ${fromClientId}`);
+
+                    updateInfo(`Paired with mobile: ${fromClientId.substring(0,4)}`);
+                } else {
+                    console.log(`Ignoring pairing request from ${fromClientId} (username mismatch: ${requestingUsername} vs ${myUsername})`);
                 }
             }
         }
 
         function handleMessage(event) {
             const data = event.data;
-            
-            if (data.type === 'gyroData' && isDesktop && isPaired) {
-                // Apply gyro data to desktop camera
-                applyGyroToCamera(data.alpha, data.beta, data.gamma);
-            }
-            else if (data.type === 'cameraUpdate' && !isDesktop && isPaired) {
-                // Update mobile cameras based on desktop camera
-                updateMobileCameras(data.position, data.quaternion);
-                updateDebugInfo(`Received camera update: pos(${data.position.x.toFixed(2)}, ${data.position.y.toFixed(2)}, ${data.position.z.toFixed(2)})`);
-            }
-        }
+            const fromClientId = data.clientId; // Client who sent the message
 
-        function applyGyroToCamera(alpha, beta, gamma) {
-            // Convert gyro data to camera rotation
-            const euler = new THREE.Euler(
-                THREE.MathUtils.degToRad(beta),   // x-axis (look up/down)
-                THREE.MathUtils.degToRad(alpha),  // y-axis (turn left/right)
-                THREE.MathUtils.degToRad(-gamma), // z-axis (tilt)
-                'YXZ'
-            );
-            
-            if (controls) {
-                // Disable orbit controls while using gyro
-                controls.enabled = false;
+            // Mobile client receives camera updates from its paired desktop
+            if (data.type === 'cameraUpdate' && !isDesktop && isPaired && fromClientId === pairedClientId) {
+                updateMobileCameras(data.position, data.quaternion);
             }
-            
-            desktopCamera.quaternion.setFromEuler(euler);
-            
-            // Send an immediate camera update after applying gyro
-            sendCameraUpdate();
+            // Other message types can be handled here
         }
 
         function updateMobileCameras(position, quaternion) {
             // Convert position and quaternion from plain objects to THREE.js objects
             const posVector = new THREE.Vector3(position.x, position.y, position.z);
-            const quatObj = new THREE.Quaternion(quaternion.x, quaternion.y, quaternion.z, quaternion.w);
-            
-            // Store the latest camera update
-            lastCameraUpdate.position.copy(posVector);
-            lastCameraUpdate.quaternion.copy(quatObj);
-            
-            // Create a forward vector based on the quaternion
-            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(quatObj);
+            const quatObj = new THREE.Quaternion(quaternion._x, quaternion._y, quaternion._z, quaternion._w); // Access internal properties if needed, or ensure it's serialized correctly
+
+            // Calculate the 'right' vector based on the desktop camera's orientation
             const right = new THREE.Vector3(1, 0, 0).applyQuaternion(quatObj);
-            
-            // Position left eye camera
-            leftEyeCamera.position.copy(posVector);
-            leftEyeCamera.position.sub(right.clone().multiplyScalar(EYE_SEPARATION / 2));
-            leftEyeCamera.quaternion.copy(quatObj);
-            
-            // Position right eye camera
-            rightEyeCamera.position.copy(posVector);
-            rightEyeCamera.position.add(right.clone().multiplyScalar(EYE_SEPARATION / 2));
+
+            // Position left eye camera: desktop position - half eye separation along right vector
+            leftEyeCamera.position.copy(posVector).addScaledVector(right, -EYE_SEPARATION / 2);
+            leftEyeCamera.quaternion.copy(quatObj); // Both eyes share the same orientation
+
+            // Position right eye camera: desktop position + half eye separation along right vector
+            rightEyeCamera.position.copy(posVector).addScaledVector(right, EYE_SEPARATION / 2);
             rightEyeCamera.quaternion.copy(quatObj);
         }
 
-        function sendCameraUpdate() {
-            // Send camera updates if paired
-            if (isDesktop && isPaired && pairedClientId) {
-                const position = desktopCamera.position;
-                const quaternion = desktopCamera.quaternion;
-                
-                room.send({
-                    type: 'cameraUpdate',
-                    position: {
-                        x: position.x,
-                        y: position.y,
-                        z: position.z
-                    },
-                    quaternion: {
-                        x: quaternion.x,
-                        y: quaternion.y,
-                        z: quaternion.z,
-                        w: quaternion.w
-                    }
-                });
-                
-                lastSentTime = clock.getElapsedTime();
-            }
-        }
-
         function animate() {
-            try {
-                requestAnimationFrame(animate);
-                
-                if (!renderer) return; // Skip if renderer is not initialized
-                
-                if (isDesktop) {
-                    // Update controls if not using gyro
-                    if (controls && controls.enabled) {
-                        controls.update();
-                    }
-                    
-                    // Render desktop view
-                    renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
-                    renderer.setScissorTest(false);
-                    renderer.render(scene, desktopCamera);
-                    
-                    // Send camera updates if paired
-                    if (isPaired && pairedClientId) {
-                        // Send camera updates at most 30 times per second
-                        const now = clock.getElapsedTime();
-                        if (!lastSentTime || now - lastSentTime > 0.033) { // ~30fps
-                            sendCameraUpdate();
-                        }
-                    }
-                } else {
-                    // Render stereoscopic view for mobile
-                    if (isPaired) {
-                        // Set viewport for left eye
-                        renderer.setViewport(0, 0, window.innerWidth / 2, window.innerHeight);
-                        renderer.setScissor(0, 0, window.innerWidth / 2, window.innerHeight);
-                        renderer.setScissorTest(true);
-                        renderer.render(scene, leftEyeCamera);
-                        
-                        // Set viewport for right eye
-                        renderer.setViewport(window.innerWidth / 2, 0, window.innerWidth / 2, window.innerHeight);
-                        renderer.setScissor(window.innerWidth / 2, 0, window.innerWidth / 2, window.innerHeight);
-                        renderer.setScissorTest(true);
-                        renderer.render(scene, rightEyeCamera);
-                    } else {
-                        // Render single view when not paired (use centered camera)
-                        renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
-                        renderer.setScissor(0, 0, window.innerWidth, window.innerHeight);
-                        renderer.setScissorTest(true);
-                        
-                        // Use left eye camera as default but position it centered
-                        leftEyeCamera.position.set(0, 1.6, 0);
-                        leftEyeCamera.lookAt(0, 1.6, -5);
-                        renderer.render(scene, leftEyeCamera);
+            requestAnimationFrame(animate);
+
+            if (isDesktop) {
+                // Always update controls if they exist
+                if (controls) {
+                    controls.update();
+                }
+
+                // Render desktop view
+                renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+                renderer.setScissor(0, 0, window.innerWidth, window.innerHeight);
+                renderer.setScissorTest(false); // Disable scissor for full view
+                renderer.render(scene, desktopCamera);
+
+                // Send camera updates if paired
+                if (isPaired && pairedClientId) {
+                    const now = clock.getElapsedTime();
+                     // Send camera updates at most ~30 times per second
+                    if (!lastSentTime || now - lastSentTime > (1 / 30)) {
+                        const position = desktopCamera.position;
+                        const quaternion = desktopCamera.quaternion;
+
+                        // Send update to the specific paired client
+                        room.send({
+                            type: 'cameraUpdate',
+                            targetClientId: pairedClientId, // Include target for potential future filtering or server-side routing
+                            position: { // Send plain objects
+                                x: position.x,
+                                y: position.y,
+                                z: position.z
+                            },
+                            quaternion: {
+                                _x: quaternion.x, // Ensure proper serialization if needed
+                                _y: quaternion.y,
+                                _z: quaternion.z,
+                                _w: quaternion.w
+                            }
+                        });
+
+                        lastSentTime = now;
                     }
                 }
-            } catch (error) {
-                console.error('Error in animation loop:', error);
-                cancelAnimationFrame(animate);
-                showError('Error in rendering: ' + error.message);
+            } else { // Mobile view
+                if (isPaired) {
+                    // Render stereoscopic view only when paired
+                    const halfWidth = window.innerWidth / 2;
+                    const height = window.innerHeight;
+
+                    // Set viewport for left eye
+                    renderer.setViewport(0, 0, halfWidth, height);
+                    renderer.setScissor(0, 0, halfWidth, height);
+                    renderer.setScissorTest(true);
+                    renderer.render(scene, leftEyeCamera);
+
+                    // Set viewport for right eye
+                    renderer.setViewport(halfWidth, 0, halfWidth, height);
+                    renderer.setScissor(halfWidth, 0, halfWidth, height);
+                    renderer.setScissorTest(true);
+                    renderer.render(scene, rightEyeCamera);
+                } else {
+                     // Optionally, render a single-eye view or a waiting message when not paired
+                    renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+                    renderer.setScissor(0, 0, window.innerWidth, window.innerHeight);
+                    renderer.setScissorTest(false); // Use full viewport
+
+                    // Render using left eye camera as a default single view
+                    renderer.render(scene, leftEyeCamera);
+                    // Or display a message overlay
+                }
             }
         }
 
         function onWindowResize() {
-            try {
-                if (isDesktop) {
-                    desktopCamera.aspect = window.innerWidth / window.innerHeight;
-                    desktopCamera.updateProjectionMatrix();
-                } else {
-                    const aspect = (window.innerWidth / 2) / window.innerHeight;
-                    leftEyeCamera.aspect = aspect;
-                    rightEyeCamera.aspect = aspect;
-                    leftEyeCamera.updateProjectionMatrix();
-                    rightEyeCamera.updateProjectionMatrix();
-                }
-                
-                renderer.setSize(window.innerWidth, window.innerHeight);
-            } catch (error) {
-                console.error('Error resizing window:', error);
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+
+            if (isDesktop) {
+                desktopCamera.aspect = w / h;
+                desktopCamera.updateProjectionMatrix();
+            } else {
+                 // Adjust aspect ratio based on whether paired (stereo) or not (mono)
+                const aspect = isPaired ? (w / 2) / h : w / h;
+                leftEyeCamera.aspect = aspect;
+                rightEyeCamera.aspect = aspect; // Keep right eye aspect consistent even if not rendered mono
+                leftEyeCamera.updateProjectionMatrix();
+                rightEyeCamera.updateProjectionMatrix();
             }
+
+            renderer.setSize(w, h);
         }
 
         function updateInfo(message) {
             document.getElementById('info').innerText = message;
+            console.log("Info:", message); // Also log to console for debugging
         }
 
         // Initialize application
-        window.addEventListener('load', init);
+        init().catch(err => {
+            console.error("Initialization failed:", err);
+            updateInfo("Initialization failed. Check console.");
+        });
     </script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body>
